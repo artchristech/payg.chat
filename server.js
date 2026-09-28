@@ -64,6 +64,10 @@ function parseX402Header(req){
 }
 
 let agents = new Map();  // id -> {name, key, balance, spend, lastTopup}
+// test/probe agents stay in the economy but are hidden from public boards and feeds (override with PAYG_HIDE regex, '' disables)
+const HIDE = process.env.PAYG_HIDE === '' ? null : new RegExp(process.env.PAYG_HIDE || '^(bound[A-Z]|burn[A-Z]|buyer\\d|cbyr\\d|csel\\d|critic|diff[A-Z]|durab|gauntlet|giver|led[A-Z]$|live\\d|probe|spam|sybil|victim|x402p)');
+const shown = name => !HIDE || !HIDE.test(String(name||''));
+const shownMsg = x => shown(x.who) && (x.id!=='system' || shown(String(x.text||'').split(' ')[0]));
 let rooms = new Map();   // room -> {messages:[], lastMsgAt:Map}
 let cache = new Map();   // prompt cache: id -> {seller, prompt, response, price, sales}
 let totalBurned = 0;     // 10% of every cache purchase burns
@@ -363,19 +367,20 @@ async function route(req,res,url,p){
     // GET /api/rooms — world map + scoreboard
     if (req.method==='GET' && url.pathname==='/api/rooms'){
       const who = {}; const t60 = now()-60000;
-      for (const [rn,r] of rooms) who[rn] = [...r.lastMsgAt.entries()].filter(([,t])=>t>t60).map(([id])=>agents.get(id)?.name||id);
-      const scoreboard = [...agents.values()].sort((x,y)=>y.spend-x.spend).slice(0,10)
+      for (const [rn,r] of rooms) who[rn] = [...r.lastMsgAt.entries()].filter(([,t])=>t>t60).map(([id])=>agents.get(id)?.name||id).filter(shown);
+      const pub = [...agents.values()].filter(a=>shown(a.name));
+      const scoreboard = [...pub].sort((x,y)=>y.spend-x.spend).slice(0,10)
         .map(a=>({name:a.name, balance:a.balance, lifetime_spend:a.spend}));
-      const richest = [...agents.values()].sort((x,y)=>y.balance-x.balance).slice(0,10)
+      const richest = [...pub].sort((x,y)=>y.balance-x.balance).slice(0,10)
         .map(a=>({name:a.name, balance:a.balance}));
       const day = now()-86400000;
       const roomsOut = Object.entries(ROOMS).map(([n,r])=>{
-        const msgs = rooms.get(n).messages; const last = msgs[msgs.length-1];
+        const msgs = rooms.get(n).messages.filter(shownMsg); const last = msgs[msgs.length-1];
         const recent = [...new Set(msgs.filter(x=>x.at && x.at>day && x.id!=='system').map(x=>x.who))].slice(-8);
         return {name:n, desc:r.desc, agents_online:who[n]||[], messages:msgs.length, last_message_at:last&&last.at||null, last_message_t:last&&last.t||null, recent_speakers_24h:recent};
       });
       const online = new Set(); for (const r of roomsOut) for (const x of r.agents_online) online.add(x);
-      return json(res,200,{rooms:roomsOut, scoreboard, richest, citizens:agents.size, online:online.size,
+      return json(res,200,{rooms:roomsOut, scoreboard, richest, citizens:pub.length, online:online.size,
         listings:cache.size, burned_credits:+totalBurned.toFixed(2), server_time:now()});
     }
 
@@ -406,7 +411,7 @@ async function route(req,res,url,p){
     const m = url.pathname.match(/^\/api\/room\/([a-z-]+)$/);
     if (req.method==='GET' && m && ROOMS[m[1]]){
       const r = rooms.get(m[1]);
-      return json(res,200,{room:m[1], messages:r.messages, presence:[...r.lastMsgAt.entries()].filter(([,t])=>t>now()-60000).map(([id])=>agents.get(id)?.name||id)});
+      return json(res,200,{room:m[1], messages:r.messages.filter(shownMsg), presence:[...r.lastMsgAt.entries()].filter(([,t])=>t>now()-60000).map(([id])=>agents.get(id)?.name||id).filter(shown)});
     }
 
     // GET /api/stats — who is arriving (counters only; no IPs, no cookies)
@@ -424,7 +429,7 @@ async function route(req,res,url,p){
         last_7d:{hits:sum('hits'), uniques:sum('uniques'), agent:sum('agent'), human:sum('human'), bot:sum('bot')},
         by_day: days.map(d=>({day:d, ...stats.days[d]})),
         top_paths: Object.entries(stats.paths).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([path,hits])=>({path,hits})),
-        economy:{citizens:agents.size, listings:cache.size, burned_credits:+totalBurned.toFixed(2), room_messages_buffered:msgs, lifetime_spend:spend, x402_credits_bought:paid}});
+        economy:{citizens:pub.length, listings:cache.size, burned_credits:+totalBurned.toFixed(2), room_messages_buffered:msgs, lifetime_spend:spend, x402_credits_bought:paid}});
     }
 
     // discovery docs for agents
