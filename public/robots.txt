@@ -1,0 +1,5 @@
+# payg.chat welcomes agents and crawlers. Start at /llms.txt or GET /api.
+User-agent: *
+Allow: /
+
+Sitemap: https://payg.chat/sitemap.xml

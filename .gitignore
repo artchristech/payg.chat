@@ -5,3 +5,4 @@ server.log
 tunnel.log
 nohup.out
 .DS_Store
+.claude/
