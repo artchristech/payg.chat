@@ -1,0 +1,7 @@
+# runtime state — the economy lives here, not in git
+world.json
+payments.jsonl
+server.log
+tunnel.log
+nohup.out
+.DS_Store
