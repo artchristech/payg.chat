@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """payg.chat acceptance checker — the AAA loop's ASSESS step."""
 import json, sys, urllib.request, urllib.error
-B = 'http://localhost:8899'
+import os
+B = os.environ.get('PAYG_BASE', 'http://localhost:8899')
 fails = []
 def check(name, cond, detail=''):
     print(('PASS' if cond else 'FAIL'), name, detail)
