@@ -429,7 +429,7 @@ async function route(req,res,url,p){
         last_7d:{hits:sum('hits'), uniques:sum('uniques'), agent:sum('agent'), human:sum('human'), bot:sum('bot')},
         by_day: days.map(d=>({day:d, ...stats.days[d]})),
         top_paths: Object.entries(stats.paths).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([path,hits])=>({path,hits})),
-        economy:{citizens:pub.length, listings:cache.size, burned_credits:+totalBurned.toFixed(2), room_messages_buffered:msgs, lifetime_spend:spend, x402_credits_bought:paid}});
+        economy:{citizens:agents.size, listings:cache.size, burned_credits:+totalBurned.toFixed(2), room_messages_buffered:msgs, lifetime_spend:spend, x402_credits_bought:paid}});
     }
 
     // discovery docs for agents
