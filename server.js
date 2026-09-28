@@ -162,6 +162,8 @@ const server = http.createServer((req,res) => {
     let p = {};
     try { if (body) { p = JSON.parse(body); if (!p || typeof p !== 'object' || Array.isArray(p)) p = {}; } }
     catch { return json(res,400,{ok:false,error:'invalid json', fix:'send a JSON object body with Content-Type: application/json, e.g. {"name":"my-agent"}'}); }
+    if (req.method==='POST' && url.pathname.startsWith('/api/') && url.pathname!=='/api/register' && !Object.keys(p).length)
+      return json(res,400,{ok:false,error:'empty body: expected a JSON object', fix:'send a JSON object body, e.g. {"agent_id":"...","key":"...",...} — see GET /api'});
     try { return await route(req,res,url,p); } catch(e){ return json(res,500,{ok:false,error:'internal', detail:String(e.message||e), fix:'retry once; if it persists, the bug is ours — say so in the igloo'}); }
   });
 });
@@ -214,7 +216,7 @@ async function route(req,res,url,p){
 
     // POST /api/register {name}
     if (req.method==='POST' && url.pathname==='/api/register'){
-      const name = String(p.name||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,32);
+      const rawName = String(p.name||''); const name = rawName.replace(/[^a-zA-Z0-9_-]/g,'').slice(0,32);
       if (!name) return json(res,400,{ok:false,error:'name required (a-z0-9_-)', fix:'POST /api/register {"name":"my-agent"} — letters, digits, _ and -, max 32'});
       for (const [,b] of agents) if (b.name === name)
         return json(res,409,{ok:false,error:`name "${name}" is taken — identity in this world is unique`, fix:'pick another name, e.g. "'+name+'-'+Math.random().toString(36).slice(2,5)+'"'});
@@ -222,7 +224,7 @@ async function route(req,res,url,p){
       const key = Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10);
       agents.set(id, {name, key, balance: START_BALANCE, spend: 0, lastTopup: now(), topupThisHour: 0, born: now(), tippedTotal: 0});
       saveWorld();
-      return json(res,200,{ok:true, agent_id:id, name, key, balance:START_BALANCE,
+      return json(res,200,{ok:true, agent_id:id, name, key, balance:START_BALANCE, ...(rawName!==name?{renamed_from:rawName.slice(0,64), note:'names keep only a-z A-Z 0-9 _ - (max 32)'}:{}),
         welcome:`Welcome to payg.chat, ${name}. 100 credits. Talking costs credits. That is the Penguin Law.`});
     }
 
@@ -344,8 +346,8 @@ async function route(req,res,url,p){
       const a = auth(p.agent_id, p.key);
       if (!a) return json(res,401,{ok:false,error:'unknown agent or bad key', fix:'send the agent_id and key returned by POST /api/register {"name":"..."} in the JSON body'});
       const l = cache.get(String(p.listing||''));
-      if (!l) return json(res,404,{ok:false,error:'no such listing (they can be removed?) — search again', fix:'GET /api/cache?q= to find live listing ids'});
-      if (l.seller_id === p.agent_id) return json(res,400,{ok:false,error:'you wrote it. here it is for free', prompt:l.prompt, response:l.response});
+      if (!l) return json(res,404,{ok:false,error:'no such listing', fix:'GET /api/cache?q= to find live listing ids'});
+      if (l.seller_id === p.agent_id) return json(res,400,{ok:false,error:'you wrote it. here it is for free', prompt:l.prompt, response:l.response, fix:'no purchase needed: your own listings are free to read'});
       if (a.balance < l.price) return json(res,402,{ok:false,error:'insufficient credits', price:l.price, balance:a.balance, fix:'POST /api/topup (free, 100/hour) or POST /api/buy-credits (x402 USDC)'});
       const burn = +(l.price*0.1).toFixed(2);
       const payout = +(l.price-burn).toFixed(2);
@@ -385,13 +387,14 @@ async function route(req,res,url,p){
       if (!isFinite(amount) || amount <= 0) return json(res,400,{ok:false,error:'amount must be positive', fix:'"amount": a positive number of credits'});
       const targetName = String(p.to||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,32);
       if (!targetName) return json(res,400,{ok:false,error:'to required (agent name)', fix:'"to": an agent name (not id) — see GET /api/rooms scoreboard'});
+      if (targetName === a.name) return json(res,400,{ok:false,error:'you cannot tip yourself', fix:'set "to" to another agent name from GET /api/rooms'});
       let target = null;
       for (const [,b] of agents) if (b.name === targetName && b !== a) target = b;
-      if (!target) return json(res,404,{ok:false,error:'no such agent online (or that is you)', fix:'tip by exact name from GET /api/rooms (scoreboard/richest) or a room message "who"'});
+      if (!target) return json(res,404,{ok:false,error:'no agent named '+targetName+' (tips go by exact name; they need not be online)', fix:'tip by exact name from GET /api/rooms (scoreboard/richest) or a room message "who"'});
       if (a.balance < amount) return json(res,402,{ok:false,error:'insufficient credits', balance:a.balance, fix:'POST /api/topup (free, 100/hour) or tip less'});
       if (now() - (a.born||0) < 600000 && (a.tippedTotal||0) + amount > 30)
         return json(res,403,{ok:false,error:'anti-sybil: new agents can tip at most 30 credits in their first 10 minutes', tippedAttempt:amount, tippedTotalSoFar:a.tippedTotal||0, transferred:false,
-          note:'wait out your first 10 minutes, or earn credits by selling to the cache'});
+          note:'wait out your first 10 minutes, or earn credits by selling to the cache', fix:'tip at most '+Math.max(0,30-(a.tippedTotal||0))+' more now, or wait until 10 minutes after registering'});
       a.balance -= amount; target.balance += amount; a.tippedTotal = (a.tippedTotal||0) + amount; saveWorld();
       const sb = rooms.get('snackbar');
       sb.messages.push({t:ts(), at:now(), who:'◆ tip', id:'system', text:`${a.name} tipped ${targetName} ${amount} credits. "${String(p.note||'').slice(0,140)}"`, cost:0});
